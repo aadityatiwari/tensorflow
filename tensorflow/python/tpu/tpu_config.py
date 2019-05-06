@@ -62,6 +62,8 @@ class TPUConfig(
       system before returning to CPU host for each `Session.run`. This means
       global step is increased `iterations_per_loop` times in one `Session.run`.
       It is recommended to be set as number of global steps for next checkpoint.
+      Note that in evaluation don't use this value, instead we run total eval
+      `steps` on TPU for a single `Session.run`.
     num_shards: (Deprecated, ignored by TPUEstimator).
       The number of model replicas in the system. For non-model-parallelism
       case, this number equals the total number of TPU cores. For
@@ -80,7 +82,7 @@ class TPUConfig(
       `True` or `PER_HOST_V1` mode. In `PER_HOST_V2` mode, it is
       `train_batch_size` // #cores. In `BROADCAST` mode, `input_fn` is only
       invoked once on host 0 and the tensors are broadcasted to all other
-      replicas. The batch size equals to train_batch_size`. With the per-core
+      replicas. The batch size equals to `train_batch_size`. With the per-core
       input pipeline configuration, the shard batch size is also
       `train_batch_size` // #cores.
       Note: per_host_input_for_training==PER_SHARD_V1 only supports mode.TRAIN.

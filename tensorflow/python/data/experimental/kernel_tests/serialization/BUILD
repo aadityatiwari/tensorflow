@@ -94,6 +94,27 @@ py_test(
 )
 
 py_test(
+    name = "choose_fastest_branch_dataset_serialization_test",
+    size = "medium",
+    srcs = ["choose_fastest_branch_dataset_serialization_test.py"],
+    srcs_version = "PY2AND3",
+    tags = [
+        "no_oss",
+        "no_pip",
+        "no_windows",
+    ],
+    deps = [
+        ":dataset_serialization_test_base",
+        "//tensorflow/python:client_testlib",
+        "//tensorflow/python:constant_op",
+        "//tensorflow/python:math_ops",
+        "//tensorflow/python/data/experimental/ops:batching",
+        "//tensorflow/python/data/experimental/ops:optimization",
+        "//tensorflow/python/data/ops:dataset_ops",
+    ],
+)
+
+py_test(
     name = "choose_fastest_dataset_serialization_test",
     size = "small",
     srcs = ["choose_fastest_dataset_serialization_test.py"],
@@ -352,25 +373,6 @@ py_test(
 )
 
 py_test(
-    name = "numa_map_and_batch_dataset_serialization_test",
-    size = "medium",
-    srcs = ["numa_map_and_batch_dataset_serialization_test.py"],
-    srcs_version = "PY2AND3",
-    tags = [
-        "no_pip",
-        "no_windows",
-        "notap",
-    ],
-    deps = [
-        ":dataset_serialization_test_base",
-        "//tensorflow/python:client_testlib",
-        "//tensorflow/python:math_ops",
-        "//tensorflow/python/data/experimental/ops:batching",
-        "//tensorflow/python/data/ops:dataset_ops",
-    ],
-)
-
-py_test(
     name = "map_dataset_serialization_test",
     size = "medium",
     srcs = ["map_dataset_serialization_test.py"],
@@ -444,7 +446,7 @@ py_test(
     deps = [
         ":dataset_serialization_test_base",
         "//tensorflow/python:client_testlib",
-        "//tensorflow/python/data/experimental/ops:batching",
+        "//tensorflow/python/data/experimental/ops:distribute",
         "//tensorflow/python/data/ops:dataset_ops",
     ],
 )

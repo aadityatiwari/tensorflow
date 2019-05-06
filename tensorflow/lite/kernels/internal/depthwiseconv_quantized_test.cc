@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 #include <sys/types.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -137,18 +138,52 @@ inline void DispatchDepthwiseConv(
           << " output_height = " << output_shape.Dims(1);
 
       // Call kernel optimized for depthwise convolutions using 3x3 filters.
-      optimized_ops::depthwise_conv::DepthwiseConv3x3Filter(
+      switch (test_param.output_rounding) {
+        case DepthwiseConvOutputRounding::kAwayFromZero:
+          optimized_ops::depthwise_conv::DepthwiseConv3x3Filter<
+              DepthwiseConvOutputRounding::kAwayFromZero>(
+              params, input_shape, input_data, filter_shape, filter_data,
+              bias_shape, bias_data, output_shape, output_data,
+              /*thread_start=*/0,
+              /*thread_end=*/output_shape.Dims(1), /*thread_dim=*/1);
+          return;
+        case DepthwiseConvOutputRounding::kUpward:
+          optimized_ops::depthwise_conv::DepthwiseConv3x3Filter<
+              DepthwiseConvOutputRounding::kUpward>(
+              params, input_shape, input_data, filter_shape, filter_data,
+              bias_shape, bias_data, output_shape, output_data,
+              /*thread_start=*/0,
+              /*thread_end=*/output_shape.Dims(1), /*thread_dim=*/1);
+          return;
+        default:
+          break;
+      }
+#endif
+      break;
+    }
+    case DepthwiseConvImplementation::kUseNeon3x3DotProduct: {
+#if defined(__ARM_FEATURE_DOTPROD) && !defined(GOOGLE_L4T)
+      DotProduct3x3KernelType kernel_type =
+          optimized_ops::depthwise_conv::CategorizeDotProductKernel(
+              input_shape, filter_shape, params);
+
+      ASSERT_TRUE(
+          kernel_type == DotProduct3x3KernelType::kPlain ||
+          kernel_type == DotProduct3x3KernelType::kStride2 ||
+          kernel_type ==
+              DotProduct3x3KernelType::kWithDepthMultiplicationStride1 ||
+          kernel_type ==
+              DotProduct3x3KernelType::kWithDepthMultiplicationStride2)
+          << "Kernel type = " << static_cast<int>(kernel_type);
+
+      optimized_ops::depthwise_conv::DepthwiseConvDotProduct3x3<
+          DepthwiseConvImplementation::kUseNeon3x3DotProduct>(
           params, input_shape, input_data, filter_shape, filter_data,
           bias_shape, bias_data, output_shape, output_data);
       return;
-#else
-      break;
 #endif
-    }
-    case DepthwiseConvImplementation::kUseNeon3x3DotProduct:
-    case DepthwiseConvImplementation::kUseUnwound3x3DotProduct:
-      // TODO(b/118426582) Placeholder for future dispatches.
       break;
+    }
     case DepthwiseConvImplementation::kUseCModel3x3DotProduct: {
       DotProduct3x3KernelType kernel_type =
           optimized_ops::depthwise_conv::CategorizeDotProductKernel(
@@ -181,17 +216,36 @@ inline void DispatchDepthwiseConv(
           bias_shape, bias_data, output_shape, output_data);
       return;
     }
+    case DepthwiseConvImplementation::kUseUnwound3x3DotProduct: {
+      DotProduct3x3KernelType kernel_type =
+          optimized_ops::depthwise_conv::CategorizeDotProductKernel(
+              input_shape, filter_shape, params);
+      ASSERT_TRUE(
+          kernel_type == DotProduct3x3KernelType::kPlain ||
+          kernel_type == DotProduct3x3KernelType::kStride2 ||
+          kernel_type ==
+              DotProduct3x3KernelType::kWithDepthMultiplicationStride1 ||
+          kernel_type ==
+              DotProduct3x3KernelType::kWithDepthMultiplicationStride2);
+      optimized_ops::depthwise_conv::DepthwiseConvDotProduct3x3<
+          DepthwiseConvImplementation::kUseUnwound3x3DotProduct>(
+          params, input_shape, input_data, filter_shape, filter_data,
+          bias_shape, bias_data, output_shape, output_data);
+      return;
+    }
     case DepthwiseConvImplementation::kUseIntrinsics3x3DotProduct: {
 #if defined(USE_NEON)
-      using optimized_ops::depthwise_conv::DotProduct3x3KernelType;
       DotProduct3x3KernelType kernel_type =
           optimized_ops::depthwise_conv::CategorizeDotProductKernel(
               input_shape, filter_shape, params);
 
-      ASSERT_TRUE(kernel_type == DotProduct3x3KernelType::kPlain ||
-                  kernel_type == DotProduct3x3KernelType::kStride2 ||
-                  kernel_type ==
-                      DotProduct3x3KernelType::kWithDepthMultiplicationStride1);
+      ASSERT_TRUE(
+          kernel_type == DotProduct3x3KernelType::kPlain ||
+          kernel_type == DotProduct3x3KernelType::kStride2 ||
+          kernel_type ==
+              DotProduct3x3KernelType::kWithDepthMultiplicationStride1 ||
+          kernel_type ==
+              DotProduct3x3KernelType::kWithDepthMultiplicationStride2);
       optimized_ops::depthwise_conv::DepthwiseConvDotProduct3x3<
           DepthwiseConvImplementation::kUseIntrinsics3x3DotProduct>(
           params, input_shape, input_data, filter_shape, filter_data,
@@ -204,7 +258,8 @@ inline void DispatchDepthwiseConv(
     case DepthwiseConvImplementation::kUseGenericKernel: {
       optimized_ops::depthwise_conv::DepthwiseConvGeneral(
           params, input_shape, input_data, filter_shape, filter_data,
-          bias_shape, bias_data, output_shape, output_data);
+          bias_shape, bias_data, output_shape, output_data, /*thread_start=*/0,
+          /*thread_end=*/output_shape.Dims(1), /*thread_dim=*/1);
       return;
     }
     case DepthwiseConvImplementation::kNone:
@@ -233,13 +288,15 @@ inline void DispatchDepthwiseConv(
       optimized_ops::DepthwiseConvWithRounding<
           DepthwiseConvOutputRounding::kAwayFromZero>(
           params, input_shape, input_data, filter_shape, filter_data,
-          bias_shape, bias_data, output_shape, output_data);
+          bias_shape, bias_data, output_shape, output_data, /*thread_start=*/0,
+          /*thread_end=*/output_shape.Dims(1), /*thread_dim=*/1);
       return;
     case DepthwiseConvOutputRounding::kUpward:
       optimized_ops::DepthwiseConvWithRounding<
           DepthwiseConvOutputRounding::kUpward>(
           params, input_shape, input_data, filter_shape, filter_data,
-          bias_shape, bias_data, output_shape, output_data);
+          bias_shape, bias_data, output_shape, output_data, /*thread_start=*/0,
+          /*thread_end=*/output_shape.Dims(1), /*thread_dim=*/1);
       return;
     default:
       break;
@@ -279,17 +336,11 @@ int TestOneDepthwiseConvWithGivenOutputShift(
   op_params.output_shift = -output_shift;
   switch (test_param.output_rounding) {
     case DepthwiseConvOutputRounding::kUpward:
-      reference_ops::depthwise_conv::DepthwiseConvBasicKernel<
-          DepthwiseConvOutputRounding::kAwayFromZero>::Run(op_params,
-                                                           input_shape,
-                                                           input_data,
-                                                           filter_shape,
-                                                           filter_data,
-                                                           bias_shape,
-                                                           bias_data,
-                                                           output_shape,
-                                                           reference_output_data
-                                                               .data());
+      reference_ops::depthwise_conv::
+          DepthwiseConvBasicKernel<DepthwiseConvOutputRounding::kUpward>::Run(
+              op_params, input_shape, input_data, filter_shape, filter_data,
+              bias_shape, bias_data, output_shape,
+              reference_output_data.data());
       break;
     case DepthwiseConvOutputRounding::kAwayFromZero:
       reference_ops::DepthwiseConv(
@@ -330,8 +381,8 @@ int TestOneDepthwiseConvWithGivenOutputShift(
   int diff_median_tolerance = 0;
   // The tolerance that we apply to means is tight, but we allow for a rounding
   // difference in one pixel, and loosen by another 1% for float comparison.
-  float mean_tolerance = std::max(2e-5f, 1.01f * 3.f / output_buffer_size *
-                                             std::sqrt(1.f * depth_multiplier));
+  float mean_tolerance = std::max(
+      1e-5f, 1.01f / output_buffer_size * std::sqrt(1.f * depth_multiplier));
   if (test_param.loose_tolerance) {
     mean_tolerance = 500.f;
     diff_mean_tolerance = 256;
@@ -660,11 +711,19 @@ TEST(TestDepthwiseConv, TestGenericKernel) {
 }
 
 #if defined(__aarch64__) && !defined(GOOGLE_L4T)
-TEST(TestDepthwiseConv, TestKernel3x3Filter) {
+TEST(TestDepthwiseConv, TestNeon3x3FilterAway) {
   const int kTestsToRun = 1000;
   for (int i = 0; i < kTestsToRun; i++) {
     TestOneDepthwiseConv3x3Filter(DepthwiseConvImplementation::kUseNeon3x3,
                                   DepthwiseConvOutputRounding::kAwayFromZero);
+  }
+}
+
+TEST(TestDepthwiseConv, TestNeon3x3FilterUpward) {
+  const int kTestsToRun = 1000;
+  for (int i = 0; i < kTestsToRun; i++) {
+    TestOneDepthwiseConv3x3Filter(DepthwiseConvImplementation::kUseNeon3x3,
+                                  DepthwiseConvOutputRounding::kUpward);
   }
 }
 #endif
@@ -680,16 +739,6 @@ TEST(TestDepthwiseConv, TestGenericKernel3x3Filter) {
   }
 }
 
-#if defined(__aarch64__) && !defined(GOOGLE_L4T)
-TEST(TestDepthwiseConv, TestNeon3x3Filter) {
-  const int kTestsToRun = 3 * 1000;
-  for (int i = 0; i < kTestsToRun; i++) {
-    TestOneDepthwiseConv3x3Filter(DepthwiseConvImplementation::kUseNeon3x3,
-                                  DepthwiseConvOutputRounding::kAwayFromZero);
-  }
-}
-#endif
-
 class DepthwiseConvTest : public ::testing::TestWithParam<TestParamTuple> {};
 
 TEST_P(DepthwiseConvTest, NeonDot3x3) {
@@ -701,7 +750,7 @@ TEST_P(DepthwiseConvTest, NeonDot3x3) {
 
 #if defined(__aarch64__) && !defined(GOOGLE_L4T)
 INSTANTIATE_TEST_SUITE_P(
-    Neon3x3Kernel, DepthwiseConvTest,
+    Neon3x3KernelAway, DepthwiseConvTest,
     testing::Combine(
         Values(DepthwiseConvImplementation::kUseNeon3x3),  // forced_invocation
         Values(1000),                                      // tests_to_run
@@ -710,6 +759,19 @@ INSTANTIATE_TEST_SUITE_P(
         Values(false),  // test_depth_multiplier
         Values(DepthwiseConvOutputRounding::kAwayFromZero),  // output_rounding
         Values(false)                                        // loose_tolerance
+        ),
+    TestParam::TestNameSuffix);
+
+INSTANTIATE_TEST_SUITE_P(
+    Neon3x3KernelUpward, DepthwiseConvTest,
+    testing::Combine(
+        Values(DepthwiseConvImplementation::kUseNeon3x3),  // forced_invocation
+        Values(1000),                                      // tests_to_run
+        Bool(),                                            // test_stride
+        Values(false),                                     // test_pad
+        Values(false),                                 // test_depth_multiplier
+        Values(DepthwiseConvOutputRounding::kUpward),  // output_rounding
+        Values(false)                                  // loose_tolerance
         ),
     TestParam::TestNameSuffix);
 #endif
@@ -744,6 +806,20 @@ INSTANTIATE_TEST_SUITE_P(
         ),
     TestParam::TestNameSuffix);
 
+INSTANTIATE_TEST_SUITE_P(
+    Unwound, DepthwiseConvTest,
+    testing::Combine(
+        Values(DepthwiseConvImplementation::
+                   kUseUnwound3x3DotProduct),          // forced_invocation
+        Values(1000),                                  // tests_to_run
+        Bool(),                                        // test_stride
+        Bool(),                                        // test_pad
+        Bool(),                                        // test_depth_multiplier
+        Values(DepthwiseConvOutputRounding::kUpward),  // output_rounding
+        Values(false)                                  // loose_tolerance
+        ),
+    TestParam::TestNameSuffix);
+
 #if defined(USE_NEON)
 INSTANTIATE_TEST_SUITE_P(
     Intrinsics, DepthwiseConvTest,
@@ -753,23 +829,25 @@ INSTANTIATE_TEST_SUITE_P(
         Values(1000),                                  // tests_to_run
         Bool(),                                        // test_stride
         Bool(),                                        // test_pad
-        Values(false),                                 // test_depth_multiplier
+        Bool(),                                        // test_depth_multiplier
         Values(DepthwiseConvOutputRounding::kUpward),  // output_rounding
         Values(kLooseIntrinsicsTolerance)              // loose_tolerance
         ),
     TestParam::TestNameSuffix);
+#endif
 
+#if defined(__ARM_FEATURE_DOTPROD) && !defined(GOOGLE_L4T)
 INSTANTIATE_TEST_SUITE_P(
-    IntrinsicsAlt, DepthwiseConvTest,
+    NeonAsm, DepthwiseConvTest,
     testing::Combine(
         Values(DepthwiseConvImplementation::
-                   kUseIntrinsics3x3DotProduct),       // forced_invocation
+                   kUseNeon3x3DotProduct),             // forced_invocation
         Values(1000),                                  // tests_to_run
-        Values(false),                                 // test_stride
-        Values(false),                                 // test_pad
-        Values(true),                                  // test_depth_multiplier
+        Bool(),                                        // test_stride
+        Bool(),                                        // test_pad
+        Bool(),                                        // test_depth_multiplier
         Values(DepthwiseConvOutputRounding::kUpward),  // output_rounding
-        Values(kLooseIntrinsicsTolerance)              // loose_tolerance
+        Values(false)                                  // loose_tolerance
         ),
     TestParam::TestNameSuffix);
 #endif
